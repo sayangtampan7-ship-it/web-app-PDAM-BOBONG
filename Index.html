@@ -1,0 +1,1283 @@
+import { useState, useCallback } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import logoImg from "@/imports/Logo_PDAM_.jpeg";
+import qrImg from "@/imports/QR_PEMBAYARAN__1_.jpeg";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+type Role = "petugas" | "pelanggan";
+type StatusBayar = "Lunas" | "Belum Bayar" | "Menunggak";
+type JabatanPetugas = "Admin" | "Bendahara" | "Catat Meter" | "Lapangan";
+type MetodeBayar = "QRIS" | "Mandiri" | "DANA";
+
+const BULAN_LIST = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+const TAHUN_LIST = ["2024","2025","2026","2027"];
+
+const DUSUN_DEFAULT = ["Fagahu","Sangaji","Unabua","Badadi","Salenga","Wayo","Kilong","Ratahaya"];
+
+const DUSUN_COLORS = [
+  "bg-blue-600","bg-indigo-600","bg-teal-600","bg-emerald-600",
+  "bg-cyan-600","bg-violet-600","bg-rose-600","bg-amber-600",
+  "bg-lime-600","bg-pink-600","bg-sky-600","bg-orange-600",
+];
+
+interface Petugas {
+  id: string;
+  nama: string;
+  jabatan: JabatanPetugas;
+  username: string;
+  password: string;
+  nip: string;
+  telepon: string;
+  aktif: boolean;
+}
+
+interface Pelanggan {
+  id: string;
+  nama: string;
+  nomorPelanggan: string;
+  alamat: string;
+  dusun: string;
+  tagihan: number;
+  status: StatusBayar;
+  bulan: string;
+  tahun: string;
+  penggunaanM3: number;
+}
+
+interface Pembayaran {
+  id: string;
+  nomorPelanggan: string;
+  nama: string;
+  dusun: string;
+  bulan: string;
+  tahun: string;
+  jumlah: number;
+  tanggal: string;
+  metode: string;
+}
+
+interface CatatanMeter {
+  id: string;
+  nomorPelanggan: string;
+  nama: string;
+  dusun: string;
+  bulan: string;
+  tahun: string;
+  meterLalu: number;
+  meterSekarang: number;
+  pemakaian: number;
+  tagihan: number;
+  dicatatOleh: string;
+  tanggal: string;
+}
+
+// ─── Petugas data (sesuai Google Sheet) ──────────────────────────────────────
+const mockPetugas: Petugas[] = [
+  { id: "PT01", nama: "Nayun", jabatan: "Admin", username: "admin", password: "admin123", nip: "19850312 201001 1 001", telepon: "0812-4455-6677", aktif: true },
+  { id: "PT02", nama: "Inda", jabatan: "Bendahara", username: "bendahara", password: "bendahara123", nip: "19900521 201501 2 002", telepon: "0813-5566-7788", aktif: true },
+  { id: "PT03", nama: "Wisnu", jabatan: "Catat Meter", username: "meter", password: "meter123", nip: "19951107 202001 1 003", telepon: "0821-6677-8899", aktif: true },
+  { id: "PT04", nama: "Haslim", jabatan: "Lapangan", username: "lapangan", password: "lapangan123", nip: "19921230 202101 1 004", telepon: "0822-7788-9900", aktif: true },
+];
+
+const jabatanAkses: Record<JabatanPetugas, string[]> = {
+  "Admin":       ["dashboard","pelanggan","pembayaran","petugas","laporan","meter"],
+  "Bendahara":   ["dashboard","pembayaran","laporan"],
+  "Catat Meter": ["dashboard","pelanggan","meter"],
+  "Lapangan":    ["dashboard","pelanggan","meter"],
+};
+
+const jabatanWarna: Record<JabatanPetugas, string> = {
+  "Admin":       "bg-purple-600",
+  "Bendahara":   "bg-amber-600",
+  "Catat Meter": "bg-blue-600",
+  "Lapangan":    "bg-teal-600",
+};
+
+const jabatanWarnaSoft: Record<JabatanPetugas, string> = {
+  "Admin":       "bg-purple-100 text-purple-700 border-purple-200",
+  "Bendahara":   "bg-amber-100 text-amber-700 border-amber-200",
+  "Catat Meter": "bg-blue-100 text-blue-700 border-blue-200",
+  "Lapangan":    "bg-teal-100 text-teal-700 border-teal-200",
+};
+
+// ─── Pelanggan data ───────────────────────────────────────────────────────────
+const mockPelanggan: Pelanggan[] = [
+  { id:"1",  nama:"Ahmad Karim",       nomorPelanggan:"FG001", alamat:"Jl. Merpati No.5",      dusun:"Fagahu",   tagihan:45000,  status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:9  },
+  { id:"2",  nama:"Siti Rahmawati",    nomorPelanggan:"FG002", alamat:"Jl. Pantai No.8",        dusun:"Fagahu",   tagihan:60000,  status:"Lunas",       bulan:"September", tahun:"2026", penggunaanM3:12 },
+  { id:"3",  nama:"Budi Santoso",      nomorPelanggan:"FG003", alamat:"Jl. Nelayan No.22",      dusun:"Fagahu",   tagihan:52000,  status:"Menunggak",   bulan:"September", tahun:"2026", penggunaanM3:10 },
+  { id:"4",  nama:"Hamid Sangaji",     nomorPelanggan:"SG001", alamat:"Jl. Sangaji Raya No.3",  dusun:"Sangaji",  tagihan:48000,  status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:9  },
+  { id:"5",  nama:"Nurul Fatimah",     nomorPelanggan:"SG002", alamat:"Gg. Mawar No.7",         dusun:"Sangaji",  tagihan:55000,  status:"Lunas",       bulan:"September", tahun:"2026", penggunaanM3:11 },
+  { id:"6",  nama:"Petrus Orno",       nomorPelanggan:"UN001", alamat:"Jl. Unabua No.1",        dusun:"Unabua",   tagihan:42000,  status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:8  },
+  { id:"7",  nama:"Maria Magdalena",   nomorPelanggan:"UN002", alamat:"Jl. Unabua No.15",       dusun:"Unabua",   tagihan:38000,  status:"Lunas",       bulan:"September", tahun:"2026", penggunaanM3:7  },
+  { id:"8",  nama:"Yusuf Barakati",    nomorPelanggan:"BD001", alamat:"Jl. Badadi Indah No.4",  dusun:"Badadi",   tagihan:50000,  status:"Menunggak",   bulan:"September", tahun:"2026", penggunaanM3:10 },
+  { id:"9",  nama:"Rahma Sari",        nomorPelanggan:"BD002", alamat:"Jl. Badadi No.9",        dusun:"Badadi",   tagihan:44000,  status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:8  },
+  { id:"10", nama:"Lukman Hakim",      nomorPelanggan:"SL001", alamat:"Jl. Salenga No.2",       dusun:"Salenga",  tagihan:47000,  status:"Lunas",       bulan:"September", tahun:"2026", penggunaanM3:9  },
+  { id:"11", nama:"Dewi Kartika",      nomorPelanggan:"SL002", alamat:"Jl. Salenga No.11",      dusun:"Salenga",  tagihan:39000,  status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:7  },
+  { id:"12", nama:"Arifin Wayo",       nomorPelanggan:"WY001", alamat:"Kampung Wayo No.3",      dusun:"Wayo",     tagihan:43000,  status:"Lunas",       bulan:"September", tahun:"2026", penggunaanM3:8  },
+  { id:"13", nama:"Suryani Kilong",    nomorPelanggan:"KL001", alamat:"Jl. Kilong Baru No.5",   dusun:"Kilong",   tagihan:46000,  status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:9  },
+  { id:"14", nama:"Karim Ratahaya",    nomorPelanggan:"RT001", alamat:"Jl. Ratahaya No.1",      dusun:"Ratahaya", tagihan:41000,  status:"Lunas",       bulan:"September", tahun:"2026", penggunaanM3:8  },
+  { id:"15", nama:"Lina Ratahaya",     nomorPelanggan:"RT002", alamat:"Jl. Ratahaya No.7",      dusun:"Ratahaya", tagihan:35000,  status:"Menunggak",   bulan:"September", tahun:"2026", penggunaanM3:6  },
+];
+
+const mockPembayaran: Pembayaran[] = [
+  { id:"P001", nomorPelanggan:"FG002", nama:"Siti Rahmawati",  dusun:"Fagahu",   bulan:"September", tahun:"2026", jumlah:60000,  tanggal:"2026-09-02", metode:"QRIS" },
+  { id:"P002", nomorPelanggan:"SG002", nama:"Nurul Fatimah",   dusun:"Sangaji",  bulan:"September", tahun:"2026", jumlah:55000,  tanggal:"2026-09-03", metode:"QRIS" },
+  { id:"P003", nomorPelanggan:"UN002", nama:"Maria Magdalena", dusun:"Unabua",   bulan:"September", tahun:"2026", jumlah:38000,  tanggal:"2026-09-04", metode:"QRIS" },
+  { id:"P004", nomorPelanggan:"SL001", nama:"Lukman Hakim",    dusun:"Salenga",  bulan:"September", tahun:"2026", jumlah:47000,  tanggal:"2026-09-05", metode:"QRIS" },
+  { id:"P005", nomorPelanggan:"WY001", nama:"Arifin Wayo",     dusun:"Wayo",     bulan:"September", tahun:"2026", jumlah:43000,  tanggal:"2026-09-06", metode:"QRIS" },
+  { id:"P006", nomorPelanggan:"RT001", nama:"Karim Ratahaya",  dusun:"Ratahaya", bulan:"September", tahun:"2026", jumlah:41000,  tanggal:"2026-09-07", metode:"QRIS" },
+];
+
+// ─── Google Sheet ID ──────────────────────────────────────────────────────────
+const SHEET_ID = "1TsAbwxbwNzsl6xu0BdmLB5ZiKvk0-X6z1Qo_ztyl5Uo";
+const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}`;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+async function submitToGoogleSheets(scriptUrl: string, data: Pembayaran): Promise<boolean> {
+  if (!scriptUrl) return false;
+  try {
+    await fetch(scriptUrl, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data) });
+    return true;
+  } catch { return false; }
+}
+
+async function fetchFromGoogleSheets(scriptUrl: string): Promise<{ pelanggan?: Pelanggan[]; pembayaran?: Pembayaran[]; petugas?: Petugas[] } | null> {
+  if (!scriptUrl) return null;
+  return new Promise(resolve => {
+    const cbName = `_gsCallback_${Date.now()}`;
+    const script = document.createElement("script");
+    let done = false;
+    const timeout = setTimeout(() => { if (!done) { done = true; cleanup(); resolve(null); } }, 10000);
+    const w = window as unknown as Record<string, unknown>;
+    const cleanup = () => { clearTimeout(timeout); delete w[cbName]; if (script.parentNode) script.parentNode.removeChild(script); };
+    w[cbName] = (data: { pelanggan?: Pelanggan[]; pembayaran?: Pembayaran[]; petugas?: Petugas[] }) => {
+      if (!done) { done = true; cleanup(); resolve(data); }
+    };
+    script.src = `${scriptUrl}?action=getAll&callback=${cbName}`;
+    script.onerror = () => { if (!done) { done = true; cleanup(); resolve(null); } };
+    document.head.appendChild(script);
+  });
+}
+
+const fmt = (n: number) => new Intl.NumberFormat("id-ID", { style:"currency", currency:"IDR", minimumFractionDigits:0 }).format(n);
+
+function dusunColor(dusun: string, dusunList: string[]): string {
+  const idx = dusunList.indexOf(dusun);
+  return DUSUN_COLORS[idx % DUSUN_COLORS.length];
+}
+
+function StatusBadge({ status }: { status: StatusBayar }) {
+  const cls = status === "Lunas"
+    ? "bg-green-100 text-green-700 border-green-200"
+    : status === "Belum Bayar"
+    ? "bg-yellow-100 text-yellow-700 border-yellow-200"
+    : "bg-red-100 text-red-700 border-red-200";
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold font-mono border ${cls}`}>{status}</span>;
+}
+
+function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
+  return (
+    <div className="bg-white rounded-xl p-4 border border-green-100 shadow-sm hover:shadow-md transition-shadow">
+      <p className="text-xs font-semibold uppercase tracking-widest text-green-700 mb-1">{label}</p>
+      <p className={`text-2xl font-extrabold font-heading ${color ?? "text-green-900"}`}>{value}</p>
+      {sub && <p className="text-xs text-green-600 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+// ─── Login ────────────────────────────────────────────────────────────────────
+function LoginPage({ onLogin }: { onLogin: (role: Role, noPlg?: string, petugas?: Petugas) => void }) {
+  const [tab, setTab] = useState<Role>("pelanggan");
+  const [noPlg, setNoPlg] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (tab === "petugas") {
+      const found = mockPetugas.find(p => p.username === username && p.password === password && p.aktif);
+      if (found) onLogin("petugas", undefined, found);
+      else setError("Username atau password salah, atau akun tidak aktif.");
+    } else {
+      const found = mockPelanggan.find(p => p.nomorPelanggan.toLowerCase() === noPlg.toLowerCase());
+      if (found) onLogin("pelanggan", found.nomorPelanggan);
+      else setError("Nomor pelanggan tidak ditemukan.");
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-green-50 via-white to-blue-50 px-4">
+      <div className="flex flex-col items-center mb-8">
+        <img src={logoImg} alt="Logo PDAM Tirta Dharma" className="h-24 w-auto object-contain mb-3" />
+        <h1 className="text-2xl font-extrabold text-green-800 font-heading tracking-tight">PDAM TIRTA DHARMA</h1>
+        <p className="text-sm text-blue-700 font-semibold tracking-widest uppercase mt-1">Bobong — Pulau Taliabu</p>
+        <p className="text-xs text-green-600 mt-1">Perusahaan Daerah Air Minum</p>
+      </div>
+      <div className="bg-white rounded-2xl shadow-xl border border-green-100 w-full max-w-sm overflow-hidden">
+        <div className="flex">
+          {(["pelanggan","petugas"] as Role[]).map(r => (
+            <button key={r} onClick={() => { setTab(r); setError(""); }}
+              className={`flex-1 py-3 text-sm font-bold uppercase tracking-widest transition-colors ${tab === r ? "bg-green-700 text-white" : "bg-green-50 text-green-700 hover:bg-green-100"}`}>
+              {r === "pelanggan" ? "Pelanggan" : "Petugas"}
+            </button>
+          ))}
+        </div>
+        <form onSubmit={handleLogin} className="p-6 flex flex-col gap-4">
+          {tab === "pelanggan" ? (
+            <div>
+              <label className="block text-xs font-semibold text-green-800 mb-1 uppercase tracking-wide">Nomor Pelanggan</label>
+              <input type="text" value={noPlg} onChange={e => setNoPlg(e.target.value)}
+                placeholder="Contoh: FG001, SG001, UN001"
+                className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" required />
+              <p className="text-xs text-green-500 mt-1">Lihat nomor pada kartu pelanggan Anda</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-green-800 mb-1 uppercase tracking-wide">Username</label>
+                <input type="text" value={username} onChange={e => setUsername(e.target.value)}
+                  placeholder="Contoh: admin, bendahara, meter"
+                  className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" required />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-green-800 mb-1 uppercase tracking-wide">Password</label>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                  placeholder="Masukkan password"
+                  className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" required />
+              </div>
+             
+            </div>
+          )}
+          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+          <button type="submit" className="bg-green-700 hover:bg-green-800 text-white font-bold py-2.5 rounded-lg text-sm uppercase tracking-widest transition-colors">
+            Masuk
+          </button>
+        </form>
+      </div>
+      <p className="text-xs text-green-500 mt-6">© 2026 PDAM Tirta Dharma Bobong — Pulau Taliabu</p>
+    </div>
+  );
+}
+
+// ─── QR Modal ─────────────────────────────────────────────────────────────────
+const MANDIRI_REK = "1860007272764";
+const DANA_NO = "085293085510";
+
+function QRModal({ pelanggan, onClose, onConfirm }: { pelanggan: Pelanggan; onClose: () => void; onConfirm: (p: Pelanggan, metode: MetodeBayar) => void }) {
+  const [tab, setTab] = useState<MetodeBayar>("QRIS");
+  const [paying, setPaying] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+
+  const mandiriQR = `BRI/MANDIRI\nNo. Rekening: ${MANDIRI_REK}\na.n. PDAM Tirta Dharma Bobong\nJumlah: Rp ${pelanggan.tagihan.toLocaleString("id-ID")}\nRef: ${pelanggan.nomorPelanggan}/${pelanggan.bulan}/${pelanggan.tahun}`;
+  const danaQR = `DANA\n${DANA_NO}\na.n. PDAM Tirta Dharma Bobong\nJumlah: Rp ${pelanggan.tagihan.toLocaleString("id-ID")}\nRef: ${pelanggan.nomorPelanggan}/${pelanggan.bulan}/${pelanggan.tahun}`;
+
+  const handleBayar = () => {
+    setPaying(true);
+    setCountdown(3);
+    const t = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) { clearInterval(t); onConfirm(pelanggan, tab); }
+        return c - 1;
+      });
+    }, 1000);
+  };
+
+  const tabs: { key: MetodeBayar; label: string; color: string }[] = [
+    { key: "QRIS",    label: "QRIS",    color: "bg-blue-600" },
+    { key: "Mandiri", label: "Mandiri", color: "bg-yellow-500" },
+    { key: "DANA",    label: "DANA",    color: "bg-blue-500" },
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="bg-green-700 px-5 py-4">
+          <h3 className="text-white font-bold text-lg font-heading">Pembayaran Tagihan Air</h3>
+          <p className="text-green-200 text-sm">{pelanggan.nama} · {pelanggan.nomorPelanggan}</p>
+        </div>
+
+        {/* Info tagihan */}
+        <div className="px-5 pt-4">
+          <div className="bg-green-50 rounded-xl px-4 py-3 flex justify-between items-center mb-4">
+            <div>
+              <p className="text-xs text-green-600">{pelanggan.bulan} {pelanggan.tahun} · {pelanggan.dusun}</p>
+              <p className="text-xs text-green-600 mt-0.5">{pelanggan.penggunaanM3} m³</p>
+            </div>
+            <span className="text-xl font-extrabold text-green-800 font-heading">{fmt(pelanggan.tagihan)}</span>
+          </div>
+
+          {/* Tabs metode */}
+          <div className="flex rounded-xl overflow-hidden border border-gray-200 mb-4">
+            {tabs.map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                className={`flex-1 py-2.5 text-xs font-bold transition-colors ${tab === t.key ? `${t.color} text-white` : "bg-gray-50 text-gray-600 hover:bg-gray-100"}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* QRIS Tab */}
+          {tab === "QRIS" && (
+            <div className="text-center">
+              <img src={qrImg} alt="QR QRIS" className="w-48 h-48 mx-auto rounded-xl border border-gray-200 object-contain mb-2" />
+              <p className="text-xs text-gray-500 mb-1">Scan dengan aplikasi perbankan / e-wallet QRIS</p>
+              <div className="flex flex-wrap justify-center gap-1 mb-3">
+                {["GoPay","OVO","DANA","ShopeePay","BCA","Mandiri","BNI","BRI"].map(a => (
+                  <span key={a} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{a}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Mandiri Tab */}
+          {tab === "Mandiri" && (
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <div className="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center">
+                  <span className="text-white font-black text-xs">M</span>
+                </div>
+                <span className="font-bold text-gray-800">Bank Mandiri</span>
+              </div>
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-3 text-left space-y-1.5">
+                <div className="flex justify-between"><span className="text-xs text-gray-500">No. Rekening</span><span className="font-mono font-bold text-gray-800">{MANDIRI_REK}</span></div>
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Atas Nama</span><span className="text-xs font-semibold text-gray-800">PDAM Tirta Dharma</span></div>
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Jumlah</span><span className="font-bold text-yellow-700">{fmt(pelanggan.tagihan)}</span></div>
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Keterangan</span><span className="font-mono text-xs text-gray-700">{pelanggan.nomorPelanggan}/{pelanggan.bulan}</span></div>
+              </div>
+              <div className="flex justify-center mb-2">
+                <QRCodeSVG value={mandiriQR} size={160} bgColor="#fff" fgColor="#1a1a1a"
+                  level="M" imageSettings={{ src: "", height: 0, width: 0, excavate: false }} />
+              </div>
+              <p className="text-xs text-gray-500">Scan atau transfer manual ke rekening di atas</p>
+            </div>
+          )}
+
+          {/* DANA Tab */}
+          {tab === "DANA" && (
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+                  <span className="text-white font-black text-xs">D</span>
+                </div>
+                <span className="font-bold text-gray-800">DANA</span>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3 text-left space-y-1.5">
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Nomor DANA</span><span className="font-mono font-bold text-gray-800">{DANA_NO}</span></div>
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Atas Nama</span><span className="text-xs font-semibold text-gray-800">PDAM Tirta Dharma</span></div>
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Jumlah</span><span className="font-bold text-blue-700">{fmt(pelanggan.tagihan)}</span></div>
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Keterangan</span><span className="font-mono text-xs text-gray-700">{pelanggan.nomorPelanggan}/{pelanggan.bulan}</span></div>
+              </div>
+              <div className="flex justify-center mb-2">
+                <QRCodeSVG value={danaQR} size={160} bgColor="#fff" fgColor="#1a1a1a"
+                  level="M" imageSettings={{ src: "", height: 0, width: 0, excavate: false }} />
+              </div>
+              <p className="text-xs text-gray-500">Scan QR atau kirim ke nomor DANA di atas</p>
+            </div>
+          )}
+        </div>
+
+        {/* Tombol aksi */}
+        <div className="px-5 pb-5 pt-3 grid grid-cols-2 gap-3">
+          <button onClick={onClose} disabled={paying}
+            className="py-2.5 border border-green-300 rounded-lg text-green-700 text-sm font-semibold hover:bg-green-50 transition-colors disabled:opacity-50">
+            Batal
+          </button>
+          {paying ? (
+            <button disabled className="py-2.5 bg-green-600 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2">
+              <span className="animate-spin">⟳</span> Memproses ({countdown}s)
+            </button>
+          ) : (
+            <button onClick={handleBayar}
+              className="py-2.5 bg-green-700 text-white rounded-lg text-sm font-bold hover:bg-green-800 transition-colors">
+              ✓ Konfirmasi Bayar
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Pelanggan View ───────────────────────────────────────────────────────────
+function PelangganView({ nomorPelanggan, onLogout, scriptUrl }: { nomorPelanggan: string; onLogout: () => void; scriptUrl: string }) {
+  const plg = mockPelanggan.find(p => p.nomorPelanggan === nomorPelanggan)!;
+  const [showQR, setShowQR] = useState(false);
+  const [paid, setPaid] = useState(plg.status === "Lunas");
+  const [toast, setToast] = useState("");
+
+  const handleConfirm = async (p: Pelanggan, metode: MetodeBayar = "QRIS") => {
+    setShowQR(false);
+    const rec: Pembayaran = {
+      id: `P${Date.now()}`, nomorPelanggan: p.nomorPelanggan, nama: p.nama,
+      dusun: p.dusun, bulan: p.bulan, tahun: p.tahun,
+      jumlah: p.tagihan, tanggal: new Date().toISOString().slice(0,10), metode,
+    };
+    await submitToGoogleSheets(scriptUrl, rec);
+    setPaid(true);
+    setToast(`✓ Pembayaran via ${metode} berhasil! Status tagihan sudah Lunas.`);
+    setTimeout(() => setToast(""), 5000);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
+      <nav className="bg-green-700 shadow-lg px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <img src={logoImg} alt="Logo" className="h-9 w-auto object-contain" />
+          <div>
+            <p className="text-white font-bold text-sm font-heading leading-tight">PDAM Tirta Dharma</p>
+            <p className="text-green-200 text-xs">Bobong — Pulau Taliabu</p>
+          </div>
+        </div>
+        <button onClick={onLogout} className="text-green-200 hover:text-white text-xs border border-green-500 hover:border-white px-3 py-1.5 rounded-lg transition-colors">Keluar</button>
+      </nav>
+      <div className="max-w-lg mx-auto px-4 py-6">
+        <div className="bg-white rounded-2xl border border-green-100 shadow-sm p-5 mb-4">
+          <p className="text-xs font-semibold text-green-600 uppercase tracking-widest mb-1">Selamat datang</p>
+          <h2 className="text-xl font-extrabold text-green-900 font-heading">{plg.nama}</h2>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div><p className="text-green-600 text-xs">No. Pelanggan</p><p className="font-mono font-bold text-green-900">{plg.nomorPelanggan}</p></div>
+            <div><p className="text-green-600 text-xs">Dusun</p><p className="font-semibold text-green-900">{plg.dusun}</p></div>
+            <div><p className="text-green-600 text-xs">Bulan Tagihan</p><p className="font-semibold text-green-900">{plg.bulan} {plg.tahun}</p></div>
+            <div><p className="text-green-600 text-xs">Penggunaan</p><p className="font-mono font-bold text-green-900">{plg.penggunaanM3} m³</p></div>
+            <div className="col-span-2"><p className="text-green-600 text-xs">Alamat</p><p className="font-medium text-green-900">{plg.alamat}</p></div>
+          </div>
+        </div>
+        <div className={`rounded-2xl border shadow-sm p-5 mb-4 ${paid ? "bg-green-50 border-green-200" : "bg-white border-yellow-200"}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-green-700">Tagihan Air</p>
+              <p className="text-sm text-green-600">{plg.bulan} {plg.tahun}</p>
+            </div>
+            <StatusBadge status={paid ? "Lunas" : plg.status} />
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-green-700 font-semibold">Total Tagihan</span>
+            <span className="text-2xl font-extrabold text-green-800 font-heading">{fmt(plg.tagihan)}</span>
+          </div>
+          {!paid ? (
+            <button onClick={() => setShowQR(true)}
+              className="mt-4 w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition-colors">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <rect x="3" y="3" width="7" height="7" rx="1" strokeWidth="2"/><rect x="14" y="3" width="7" height="7" rx="1" strokeWidth="2"/>
+                <rect x="3" y="14" width="7" height="7" rx="1" strokeWidth="2"/><circle cx="17.5" cy="17.5" r="2.5" strokeWidth="2"/>
+              </svg>
+              Bayar dengan QRIS
+            </button>
+          ) : (
+            <div className="mt-4 bg-green-100 border border-green-300 rounded-xl py-3 text-center">
+              <p className="text-green-700 font-bold text-sm">✓ Tagihan bulan ini telah lunas</p>
+            </div>
+          )}
+        </div>
+        <div className="bg-white rounded-2xl border border-green-100 shadow-sm p-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-green-700 mb-2">Informasi Layanan</p>
+          <div className="space-y-2 text-sm text-green-800">
+            <div className="flex items-start gap-2"><span>📞</span><span>Pengaduan: <strong>(0921) 321-4567</strong></span></div>
+            <div className="flex items-start gap-2"><span>📍</span><span>Kantor PDAM, Jl. Pattimura No.1 Bobong, Pulau Taliabu</span></div>
+            <div className="flex items-start gap-2"><span>🕐</span><span>Jam Operasional: Senin–Jumat 08:00–16:00 WITA</span></div>
+          </div>
+        </div>
+      </div>
+      {showQR && <QRModal pelanggan={plg} onClose={() => setShowQR(false)} onConfirm={handleConfirm} />}
+      {toast && <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-green-700 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-semibold z-50 text-center max-w-sm">{toast}</div>}
+    </div>
+  );
+}
+
+// ─── Manajemen Petugas ────────────────────────────────────────────────────────
+function ManajemenPetugas({ currentJabatan }: { currentJabatan: JabatanPetugas }) {
+  const [list, setList] = useState<Petugas[]>(mockPetugas);
+  const [showForm, setShowForm] = useState(false);
+  const [editTarget, setEditTarget] = useState<Petugas | null>(null);
+  const [form, setForm] = useState<Omit<Petugas,"id">>({ nama:"", jabatan:"Admin", username:"", password:"", nip:"", telepon:"", aktif:true });
+  const [toast, setToast] = useState("");
+  const isAdmin = currentJabatan === "Admin";
+
+  const openAdd = () => { setEditTarget(null); setForm({ nama:"", jabatan:"Admin", username:"", password:"", nip:"", telepon:"", aktif:true }); setShowForm(true); };
+  const openEdit = (p: Petugas) => { setEditTarget(p); setForm({ nama:p.nama, jabatan:p.jabatan, username:p.username, password:p.password, nip:p.nip, telepon:p.telepon, aktif:p.aktif }); setShowForm(true); };
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (editTarget) { setList(prev => prev.map(p => p.id === editTarget.id ? { ...p, ...form } : p)); setToast("Data petugas berhasil diperbarui."); }
+    else { setList(prev => [...prev, { id:`PT${String(prev.length+1).padStart(2,"0")}`, ...form }]); setToast("Petugas baru ditambahkan."); }
+    setShowForm(false); setTimeout(() => setToast(""), 3000);
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-green-100 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-green-100 flex items-center justify-between">
+        <h3 className="font-extrabold text-green-900 font-heading">Data Petugas</h3>
+        {isAdmin && <button onClick={openAdd} className="bg-green-700 text-white text-xs font-bold px-4 py-2 rounded-lg hover:bg-green-800 transition-colors">+ Tambah Petugas</button>}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 border-b border-green-50">
+        {(["Admin","Bendahara","Catat Meter","Lapangan"] as JabatanPetugas[]).map(j => (
+          <div key={j} className={`rounded-xl p-3 text-white ${jabatanWarna[j]}`}>
+            <p className="text-xs font-bold uppercase tracking-widest opacity-80 mb-1">{j}</p>
+            <p className="text-2xl font-extrabold font-heading">{list.filter(p => p.jabatan === j).length}</p>
+            <p className="text-xs opacity-70">petugas</p>
+          </div>
+        ))}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-green-50 border-b border-green-100">
+              {["ID","Nama","Jabatan","Username","NIP","Telepon","Status",...(isAdmin ? ["Aksi"] : [])].map(h => (
+                <th key={h} className="text-left px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700 whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((p, i) => (
+              <tr key={p.id} className={`border-b border-green-50 hover:bg-green-50 transition-colors ${i%2===0?"bg-white":"bg-green-50/30"}`}>
+                <td className="px-4 py-3 font-mono text-xs font-bold text-green-600">{p.id}</td>
+                <td className="px-4 py-3 font-semibold text-green-900">{p.nama}</td>
+                <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold border ${jabatanWarnaSoft[p.jabatan]}`}>{p.jabatan}</span></td>
+                <td className="px-4 py-3 font-mono text-xs text-green-700">{p.username}</td>
+                <td className="px-4 py-3 font-mono text-xs text-green-600 whitespace-nowrap">{p.nip}</td>
+                <td className="px-4 py-3 text-xs text-green-700">{p.telepon}</td>
+                <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold border ${p.aktif?"bg-green-100 text-green-700 border-green-200":"bg-gray-100 text-gray-500 border-gray-200"}`}>{p.aktif?"Aktif":"Nonaktif"}</span></td>
+                {isAdmin && (
+                  <td className="px-4 py-3">
+                    <div className="flex gap-2">
+                      <button onClick={() => openEdit(p)} className="text-xs font-bold text-blue-600 border border-blue-200 hover:border-blue-400 px-2 py-1 rounded-lg transition-colors">Edit</button>
+                      <button onClick={() => setList(prev => prev.map(x => x.id===p.id?{...x,aktif:!x.aktif}:x))} className={`text-xs font-bold px-2 py-1 rounded-lg border transition-colors ${p.aktif?"text-red-600 border-red-200":"text-green-600 border-green-200"}`}>{p.aktif?"Nonaktif":"Aktifkan"}</button>
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="p-4 border-t border-green-100 bg-green-50">
+        <p className="text-xs font-bold text-green-800 mb-2 uppercase tracking-widest">Hak Akses per Jabatan</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {(Object.entries(jabatanAkses) as [JabatanPetugas, string[]][]).map(([j, akses]) => (
+            <div key={j} className="bg-white rounded-lg p-2.5 border border-green-100">
+              <p className={`text-xs font-bold mb-1.5 inline-block px-2 py-0.5 rounded-full border ${jabatanWarnaSoft[j]}`}>{j}</p>
+              <ul className="space-y-0.5">{akses.map(a => <li key={a} className="text-xs text-green-700 flex items-center gap-1"><span className="text-green-500">✓</span>{a}</li>)}</ul>
+            </div>
+          ))}
+        </div>
+      </div>
+      {showForm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowForm(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="font-extrabold text-green-900 font-heading text-lg mb-4">{editTarget ? "Edit Petugas" : "Tambah Petugas Baru"}</h3>
+            <form onSubmit={handleSave} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2"><label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Nama Lengkap</label><input required value={form.nama} onChange={e => setForm({...form,nama:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="Nama lengkap"/></div>
+                <div><label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Jabatan</label><select value={form.jabatan} onChange={e => setForm({...form,jabatan:e.target.value as JabatanPetugas})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50">{(["Admin","Bendahara","Catat Meter","Lapangan"] as JabatanPetugas[]).map(j => <option key={j} value={j}>{j}</option>)}</select></div>
+                <div><label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Telepon</label><input value={form.telepon} onChange={e => setForm({...form,telepon:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="0812-xxxx-xxxx"/></div>
+                <div><label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Username</label><input required value={form.username} onChange={e => setForm({...form,username:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="username"/></div>
+                <div><label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Password</label><input required type="password" value={form.password} onChange={e => setForm({...form,password:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="password"/></div>
+                <div className="col-span-2"><label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">NIP</label><input value={form.nip} onChange={e => setForm({...form,nip:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="Nomor Induk Pegawai"/></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button type="button" onClick={() => setShowForm(false)} className="py-2.5 border border-green-300 rounded-lg text-green-700 text-sm font-semibold hover:bg-green-50 transition-colors">Batal</button>
+                <button type="submit" className="py-2.5 bg-green-700 text-white rounded-lg text-sm font-bold hover:bg-green-800 transition-colors">Simpan</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {toast && <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-green-700 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-semibold z-50">{toast}</div>}
+    </div>
+  );
+}
+
+// ─── Catat Meter View ────────────────────────────────────────────────────────
+function CatatMeterView({ pelangganList, setPelangganList, loggedNama }: {
+  pelangganList: Pelanggan[];
+  setPelangganList: React.Dispatch<React.SetStateAction<Pelanggan[]>>;
+  loggedNama: string;
+}) {
+  const TARIF_PER_M3 = 5000;
+  const [catatanList, setCatatanList] = useState<CatatanMeter[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectedPlg, setSelectedPlg] = useState<Pelanggan | null>(null);
+  const [meterLalu, setMeterLalu] = useState("");
+  const [meterSekarang, setMeterSekarang] = useState("");
+  const [toast, setToast] = useState("");
+
+  const pemakaian = Math.max(0, Number(meterSekarang) - Number(meterLalu));
+  const tagihanHitung = pemakaian * TARIF_PER_M3;
+
+  const filtered = pelangganList.filter(p =>
+    p.nama.toLowerCase().includes(search.toLowerCase()) ||
+    p.nomorPelanggan.toLowerCase().includes(search.toLowerCase()) ||
+    p.dusun.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const bulanList = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+  const bulanSekarang = bulanList[new Date().getMonth()];
+  const tahunSekarang = String(new Date().getFullYear());
+
+  const handleSimpan = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPlg) return;
+    const catatan: CatatanMeter = {
+      id: `CM${Date.now()}`,
+      nomorPelanggan: selectedPlg.nomorPelanggan,
+      nama: selectedPlg.nama,
+      dusun: selectedPlg.dusun,
+      bulan: bulanSekarang,
+      tahun: tahunSekarang,
+      meterLalu: Number(meterLalu),
+      meterSekarang: Number(meterSekarang),
+      pemakaian,
+      tagihan: tagihanHitung,
+      dicatatOleh: loggedNama,
+      tanggal: new Date().toISOString().slice(0, 10),
+    };
+    setCatatanList(prev => [catatan, ...prev]);
+    setPelangganList(prev => prev.map(p =>
+      p.id === selectedPlg.id
+        ? { ...p, penggunaanM3: pemakaian, tagihan: tagihanHitung, bulan: bulanSekarang, tahun: tahunSekarang, status: "Belum Bayar" }
+        : p
+    ));
+    setShowForm(false);
+    setSelectedPlg(null);
+    setMeterLalu("");
+    setMeterSekarang("");
+    setToast(`✓ Meter ${selectedPlg.nama} berhasil dicatat. Tagihan: ${fmt(tagihanHitung)}`);
+    setTimeout(() => setToast(""), 4000);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Header + tombol */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-extrabold text-green-900 font-heading text-lg">Catat Meter Air</h2>
+          <p className="text-xs text-green-600">{bulanSekarang} {tahunSekarang} · {catatanList.length} sudah dicatat</p>
+        </div>
+        <button onClick={() => setShowForm(true)}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-4 py-2 rounded-xl transition-colors flex items-center gap-2">
+          <span>＋</span> Catat Meter
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-white rounded-xl p-3 border border-green-100 shadow-sm text-center">
+          <p className="text-2xl font-extrabold text-blue-700 font-heading">{pelangganList.length}</p>
+          <p className="text-xs text-green-600 font-semibold uppercase tracking-wide mt-0.5">Total Pelanggan</p>
+        </div>
+        <div className="bg-white rounded-xl p-3 border border-green-100 shadow-sm text-center">
+          <p className="text-2xl font-extrabold text-green-700 font-heading">{catatanList.length}</p>
+          <p className="text-xs text-green-600 font-semibold uppercase tracking-wide mt-0.5">Sudah Dicatat</p>
+        </div>
+        <div className="bg-white rounded-xl p-3 border border-green-100 shadow-sm text-center">
+          <p className="text-2xl font-extrabold text-red-600 font-heading">{pelangganList.length - catatanList.length}</p>
+          <p className="text-xs text-green-600 font-semibold uppercase tracking-wide mt-0.5">Belum Dicatat</p>
+        </div>
+      </div>
+
+      {/* Tabel riwayat catatan */}
+      {catatanList.length > 0 && (
+        <div className="bg-white rounded-2xl border border-green-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-green-100 bg-blue-50">
+            <h3 className="font-bold text-blue-800 text-sm">Riwayat Catat Meter — {bulanSekarang} {tahunSekarang}</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  {["No.Plg","Nama","Dusun","Meter Lalu","Meter Skrg","Pemakaian","Tagihan","Dicatat Oleh","Tanggal"].map(h => (
+                    <th key={h} className="text-left px-3 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-600 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {catatanList.map((c, i) => (
+                  <tr key={c.id} className={`border-b border-gray-50 hover:bg-blue-50 transition-colors ${i%2===0?"bg-white":"bg-gray-50/30"}`}>
+                    <td className="px-3 py-2.5 font-mono text-xs font-bold text-blue-800">{c.nomorPelanggan}</td>
+                    <td className="px-3 py-2.5 font-medium text-gray-800">{c.nama}</td>
+                    <td className="px-3 py-2.5 text-xs text-gray-600">{c.dusun}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-right">{c.meterLalu.toLocaleString()}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-right">{c.meterSekarang.toLocaleString()}</td>
+                    <td className="px-3 py-2.5 font-mono font-bold text-blue-700 text-right">{c.pemakaian} m³</td>
+                    <td className="px-3 py-2.5 font-mono font-bold text-green-800 whitespace-nowrap">{fmt(c.tagihan)}</td>
+                    <td className="px-3 py-2.5 text-xs text-gray-600">{c.dicatatOleh}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{c.tanggal}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Daftar pelanggan belum dicatat */}
+      <div className="bg-white rounded-2xl border border-green-100 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-green-100 flex items-center gap-3">
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama / no. pelanggan / dusun…"
+            className="flex-1 border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-green-50" />
+          <span className="text-xs text-green-600 whitespace-nowrap">{filtered.length} pelanggan</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-green-50 border-b border-green-100">
+                {["No.Plg","Nama","Dusun","Pemakaian Lalu","Tagihan Lalu","Status","Aksi"].map(h => (
+                  <th key={h} className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wide text-green-700 whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((p, i) => {
+                const sudahDicatat = catatanList.some(c => c.nomorPelanggan === p.nomorPelanggan);
+                return (
+                  <tr key={p.id} className={`border-b border-green-50 hover:bg-green-50 transition-colors ${i%2===0?"bg-white":"bg-green-50/20"}`}>
+                    <td className="px-4 py-3 font-mono text-xs font-bold text-green-800">{p.nomorPelanggan}</td>
+                    <td className="px-4 py-3 font-medium text-green-900">{p.nama}</td>
+                    <td className="px-4 py-3 text-xs text-green-700">{p.dusun}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-right text-green-700">{p.penggunaanM3} m³</td>
+                    <td className="px-4 py-3 font-mono text-xs text-right font-bold text-green-900">{fmt(p.tagihan)}</td>
+                    <td className="px-4 py-3">
+                      {sudahDicatat
+                        ? <span className="bg-green-100 text-green-700 border border-green-200 text-xs px-2 py-0.5 rounded-full font-bold">✓ Dicatat</span>
+                        : <span className="bg-yellow-100 text-yellow-700 border border-yellow-200 text-xs px-2 py-0.5 rounded-full font-bold">Belum</span>
+                      }
+                    </td>
+                    <td className="px-4 py-3">
+                      {!sudahDicatat && (
+                        <button onClick={() => { setSelectedPlg(p); setMeterLalu(String(p.penggunaanM3)); setShowForm(true); }}
+                          className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">
+                          Catat
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal Form Catat Meter */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => { setShowForm(false); setSelectedPlg(null); }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="font-extrabold text-blue-900 font-heading text-lg mb-1">Catat Angka Meter</h3>
+            {selectedPlg && <p className="text-xs text-gray-600 mb-4">{selectedPlg.nama} · {selectedPlg.nomorPelanggan} · {selectedPlg.dusun}</p>}
+            <form onSubmit={handleSimpan} className="space-y-4">
+              {!selectedPlg && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">Pilih Pelanggan</label>
+                  <select required onChange={e => { const p = pelangganList.find(x => x.id === e.target.value); setSelectedPlg(p||null); if(p) setMeterLalu(String(p.penggunaanM3)); }}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    <option value="">-- Pilih pelanggan --</option>
+                    {pelangganList.map(p => <option key={p.id} value={p.id}>{p.nomorPelanggan} — {p.nama} ({p.dusun})</option>)}
+                  </select>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">Angka Meter Lalu</label>
+                  <input type="number" min="0" required value={meterLalu} onChange={e => setMeterLalu(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" placeholder="0" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">Angka Meter Sekarang</label>
+                  <input type="number" min="0" required value={meterSekarang} onChange={e => setMeterSekarang(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" placeholder="0" />
+                </div>
+              </div>
+              {/* Preview hitung */}
+              {meterSekarang && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-1.5">
+                  <div className="flex justify-between text-sm"><span className="text-gray-600">Pemakaian</span><span className="font-bold text-blue-700">{pemakaian} m³</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-gray-600">Tarif</span><span className="text-gray-600">Rp 5.000 / m³</span></div>
+                  <div className="flex justify-between font-bold border-t border-blue-200 pt-2 mt-1"><span className="text-gray-700">Total Tagihan</span><span className="text-green-700 text-base">{fmt(tagihanHitung)}</span></div>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <button type="button" onClick={() => { setShowForm(false); setSelectedPlg(null); }} className="py-2.5 border border-gray-300 rounded-lg text-gray-700 text-sm font-semibold hover:bg-gray-50">Batal</button>
+                <button type="submit" className="py-2.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors">Simpan Catatan</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {toast && <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-blue-700 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-semibold z-50 text-center max-w-sm">{toast}</div>}
+    </div>
+  );
+}
+
+// ─── Petugas Dashboard ────────────────────────────────────────────────────────
+function PetugasDashboard({ onLogout, scriptUrl, setScriptUrl, loggedPetugas }: {
+  onLogout: () => void; scriptUrl: string; setScriptUrl: (s: string) => void; loggedPetugas: Petugas | null;
+}) {
+  const [dusunList, setDusunList] = useState<string[]>(DUSUN_DEFAULT);
+  const [activeTab, setActiveTab] = useState<string>(DUSUN_DEFAULT[0]);
+  const [payments, setPayments] = useState<Pembayaran[]>(mockPembayaran);
+  const [pelangganList, setPelangganList] = useState<Pelanggan[]>(mockPelanggan);
+  const [selectedPlg, setSelectedPlg] = useState<Pelanggan | null>(null);
+  const [toast, setToast] = useState("");
+  const [showScript, setShowScript] = useState(false);
+  const [scriptInput, setScriptInput] = useState(scriptUrl);
+  const [activeView, setActiveView] = useState<"dashboard"|"pembayaran"|"petugas"|"meter">("dashboard");
+  const [showAddDusun, setShowAddDusun] = useState(false);
+  const [newDusun, setNewDusun] = useState("");
+  const [syncing, setSyncing] = useState(false);
+
+  // Tambah pelanggan form
+  const [showAddPlg, setShowAddPlg] = useState(false);
+  const [plgForm, setPlgForm] = useState<Omit<Pelanggan,"id">>({ nama:"", nomorPelanggan:"", alamat:"", dusun:activeTab, tagihan:0, status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:0 });
+
+  const jabatan = loggedPetugas?.jabatan ?? "Admin";
+  const akses = jabatanAkses[jabatan];
+  const filtered = pelangganList.filter(p => p.dusun === activeTab);
+
+  const handleSync = useCallback(async () => {
+    if (!scriptUrl) { setToast("⚠ Harap isi URL Apps Script terlebih dahulu."); setTimeout(()=>setToast(""),4000); return; }
+    setSyncing(true);
+    setToast("⟳ Memuat data dari Google Sheet...");
+    const result = await fetchFromGoogleSheets(scriptUrl);
+    setSyncing(false);
+    if (!result) { setToast("✗ Gagal terhubung. Periksa URL dan deploy Apps Script."); setTimeout(()=>setToast(""),5000); return; }
+    if (result.pelanggan) { setPelangganList(result.pelanggan); const newDusuns = [...new Set(result.pelanggan.map((p: Pelanggan) => p.dusun))]; setDusunList(newDusuns.length ? newDusuns : DUSUN_DEFAULT); }
+    if (result.pembayaran) setPayments(result.pembayaran);
+    setToast("✓ Data berhasil dimuat dari Google Sheet!");
+    setTimeout(()=>setToast(""),4000);
+  }, [scriptUrl]);
+
+  const stats = {
+    total: pelangganList.length,
+    lunas: pelangganList.filter(p => p.status === "Lunas").length,
+    belumBayar: pelangganList.filter(p => p.status !== "Lunas").length,
+    totalTagihan: pelangganList.reduce((s,p) => s+p.tagihan, 0),
+    totalTerkumpul: payments.reduce((s,p) => s+p.jumlah, 0),
+  };
+
+  const handleConfirmPayment = async (p: Pelanggan, metode: MetodeBayar = "QRIS") => {
+    const rec: Pembayaran = {
+      id:`P${Date.now()}`, nomorPelanggan:p.nomorPelanggan, nama:p.nama,
+      dusun:p.dusun, bulan:p.bulan, tahun:p.tahun,
+      jumlah:p.tagihan, tanggal:new Date().toISOString().slice(0,10), metode,
+    };
+    await submitToGoogleSheets(scriptUrl, rec);
+    setPayments(prev => [rec, ...prev]);
+    setPelangganList(prev => prev.map(x => x.id===p.id ? {...x,status:"Lunas"} : x));
+    setSelectedPlg(null);
+    setToast(`✓ Pembayaran ${p.nama} via ${metode} berhasil!${scriptUrl ? " Terkirim ke Google Sheet." : ""}`);
+    setTimeout(() => setToast(""), 5000);
+  };
+
+  const handleAddDusun = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newDusun.trim();
+    if (!trimmed || dusunList.includes(trimmed)) return;
+    setDusunList(prev => [...prev, trimmed]);
+    setActiveTab(trimmed);
+    setNewDusun("");
+    setShowAddDusun(false);
+    setToast(`Dusun "${trimmed}" berhasil ditambahkan.`);
+    setTimeout(() => setToast(""), 3000);
+  };
+
+  const handleAddPelanggan = (e: React.FormEvent) => {
+    e.preventDefault();
+    const newId = String(pelangganList.length + 1);
+    setPelangganList(prev => [...prev, { id:newId, ...plgForm, dusun:activeTab }]);
+    setShowAddPlg(false);
+    setToast(`Pelanggan ${plgForm.nama} berhasil ditambahkan.`);
+    setTimeout(() => setToast(""), 3000);
+    setPlgForm({ nama:"", nomorPelanggan:"", alamat:"", dusun:activeTab, tagihan:0, status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:0 });
+  };
+
+  return (
+    <div className="min-h-screen bg-green-50 flex flex-col">
+      {/* Navbar */}
+      <nav className="bg-green-800 shadow-lg px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+        <div className="flex items-center gap-3">
+          <img src={logoImg} alt="Logo" className="h-9 w-auto object-contain" />
+          <div>
+            <p className="text-white font-bold text-sm font-heading leading-tight">PDAM Tirta Dharma</p>
+            <div className="flex items-center gap-2">
+              <p className="text-green-300 text-xs">Dasbor Petugas</p>
+              {loggedPetugas && <span className={`text-xs font-bold px-2 py-0.5 rounded-full text-white ${jabatanWarna[loggedPetugas.jabatan]}`}>{loggedPetugas.jabatan}</span>}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={handleSync} disabled={syncing} className="text-green-300 hover:text-white border border-green-600 hover:border-white px-2.5 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-50 flex items-center gap-1">
+            <span className={syncing ? "animate-spin inline-block" : ""}>⟳</span> Sync
+          </button>
+          <button onClick={() => setShowScript(true)} className="text-green-300 hover:text-white border border-green-600 hover:border-white px-2.5 py-1.5 rounded-lg text-xs transition-colors">⚙ Google Sheet</button>
+          <button onClick={onLogout} className="text-green-200 hover:text-white text-xs border border-green-600 hover:border-white px-3 py-1.5 rounded-lg transition-colors">Keluar</button>
+        </div>
+      </nav>
+
+      <div className="max-w-6xl mx-auto w-full px-4 py-5 flex-1">
+        {/* View switcher */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button onClick={() => setActiveView("dashboard")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeView==="dashboard"?"bg-green-700 text-white":"bg-white text-green-700 border border-green-200 hover:bg-green-50"}`}>Dasbor</button>
+          {akses.includes("meter") && <button onClick={() => setActiveView("meter")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeView==="meter"?"bg-blue-600 text-white":"bg-white text-blue-700 border border-blue-200 hover:bg-blue-50"}`}>📊 Catat Meter</button>}
+          {akses.includes("pembayaran") && <button onClick={() => setActiveView("pembayaran")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeView==="pembayaran"?"bg-green-700 text-white":"bg-white text-green-700 border border-green-200 hover:bg-green-50"}`}>Riwayat Pembayaran</button>}
+          {akses.includes("petugas") && <button onClick={() => setActiveView("petugas")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeView==="petugas"?"bg-green-700 text-white":"bg-white text-green-700 border border-green-200 hover:bg-green-50"}`}>Data Petugas</button>}
+        </div>
+
+        {loggedPetugas && (
+          <div className="mb-4 flex items-center gap-3 bg-white border border-green-100 rounded-xl px-4 py-2.5 shadow-sm w-fit">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs ${jabatanWarna[loggedPetugas.jabatan]}`}>{loggedPetugas.nama.charAt(0)}</div>
+            <div>
+              <p className="font-bold text-green-900 text-sm leading-tight">{loggedPetugas.nama}</p>
+              <p className="text-xs text-green-600">{loggedPetugas.jabatan} · NIP {loggedPetugas.nip}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── DASHBOARD VIEW ── */}
+        {activeView === "dashboard" && (
+          <>
+            {/* Summary stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+              <StatCard label="Total Pelanggan" value={stats.total} sub="semua dusun" />
+              <StatCard label="Sudah Bayar" value={stats.lunas} sub="bulan ini" color="text-green-700" />
+              <StatCard label="Belum Bayar" value={stats.belumBayar} sub="perlu tindak lanjut" color="text-red-600" />
+              <StatCard label="Terkumpul" value={fmt(stats.totalTerkumpul)} sub={`dari ${fmt(stats.totalTagihan)}`} color="text-blue-700" />
+            </div>
+
+            {/* Dusun mini-cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+              {dusunList.map(d => {
+                const total = pelangganList.filter(p => p.dusun === d).length;
+                const lunas = pelangganList.filter(p => p.dusun === d && p.status === "Lunas").length;
+                const tagihan = pelangganList.filter(p => p.dusun === d).reduce((s,p) => s+p.tagihan, 0);
+                const color = dusunColor(d, dusunList);
+                return (
+                  <div key={d} className={`rounded-xl p-3 text-white shadow-md cursor-pointer hover:opacity-90 transition-opacity ${color}`} onClick={() => { setActiveTab(d); }}>
+                    <p className="text-xs font-bold uppercase tracking-widest opacity-80 mb-1">Dusun {d}</p>
+                    <p className="text-xl font-extrabold font-heading">{total} plg</p>
+                    <p className="text-xs opacity-80 mt-1">{lunas} lunas · {fmt(tagihan)}</p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Dusun Tabs + table */}
+            <div className="bg-white rounded-2xl border border-green-100 shadow-sm overflow-hidden">
+              {/* Tab header */}
+              <div className="flex overflow-x-auto border-b border-green-100">
+                {dusunList.map(d => (
+                  <button key={d} onClick={() => setActiveTab(d)}
+                    className={`flex-shrink-0 px-4 py-3 text-xs font-bold uppercase tracking-widest transition-colors whitespace-nowrap ${activeTab===d ? `${dusunColor(d,dusunList)} text-white` : "text-green-700 hover:bg-green-50"}`}>
+                    {d}
+                  </button>
+                ))}
+                {/* + Tambah Dusun */}
+                <button onClick={() => setShowAddDusun(true)}
+                  className="flex-shrink-0 px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-500 hover:text-green-700 hover:bg-green-50 border-l border-green-100 transition-colors flex items-center gap-1">
+                  <span className="text-lg leading-none">+</span> Dusun
+                </button>
+              </div>
+
+              {/* Table header with Add Pelanggan */}
+              <div className="flex items-center justify-between px-4 py-2.5 bg-green-50 border-b border-green-100">
+                <span className="text-xs font-bold text-green-700 uppercase tracking-widest">
+                  Dusun {activeTab} — {filtered.length} pelanggan
+                </span>
+                {(akses.includes("pelanggan") || akses.includes("meter")) && (
+                  <button onClick={() => { setPlgForm({ nama:"", nomorPelanggan:"", alamat:"", dusun:activeTab, tagihan:0, status:"Belum Bayar", bulan:"September", tahun:"2026", penggunaanM3:0 }); setShowAddPlg(true); }}
+                    className="bg-green-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-green-800 transition-colors">
+                    + Tambah Pelanggan
+                  </button>
+                )}
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-white border-b border-green-50">
+                      <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700 whitespace-nowrap">No. Plg</th>
+                      <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700">Nama</th>
+                      <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700 hidden md:table-cell">Alamat</th>
+                      <th className="text-center px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700 whitespace-nowrap">Bulan</th>
+                      <th className="text-center px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700">Tahun</th>
+                      <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700 whitespace-nowrap">Pemakaian</th>
+                      <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700">Tagihan</th>
+                      <th className="text-center px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700">Status</th>
+                      <th className="text-center px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((p, i) => (
+                      <tr key={p.id} className={`border-b border-green-50 hover:bg-green-50 transition-colors ${i%2===0?"bg-white":"bg-green-50/20"}`}>
+                        <td className="px-4 py-3 font-mono text-xs font-bold text-green-800">{p.nomorPelanggan}</td>
+                        <td className="px-4 py-3 font-medium text-green-900">{p.nama}</td>
+                        <td className="px-4 py-3 text-green-600 text-xs hidden md:table-cell">{p.alamat}</td>
+                        <td className="px-4 py-3 text-center text-xs text-green-700 font-medium">{p.bulan}</td>
+                        <td className="px-4 py-3 text-center font-mono text-xs text-green-700">{p.tahun}</td>
+                        <td className="px-4 py-3 text-right font-mono text-xs font-bold text-green-700">{p.penggunaanM3} m³</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-green-900 whitespace-nowrap">{fmt(p.tagihan)}</td>
+                        <td className="px-4 py-3 text-center"><StatusBadge status={p.status} /></td>
+                        <td className="px-4 py-3 text-center">
+                          {p.status !== "Lunas" ? (
+                            <button onClick={() => setSelectedPlg(p)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">Bayar</button>
+                          ) : (
+                            <span className="text-green-600 text-xs font-semibold">✓ Lunas</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {filtered.length === 0 && <div className="py-10 text-center text-green-400 text-sm">Belum ada pelanggan di Dusun {activeTab}.</div>}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── CATAT METER VIEW ── */}
+        {activeView === "meter" && (
+          <CatatMeterView
+            pelangganList={pelangganList}
+            setPelangganList={setPelangganList}
+            loggedNama={loggedPetugas?.nama ?? "Petugas"}
+          />
+        )}
+
+        {/* ── PETUGAS VIEW ── */}
+        {activeView === "petugas" && <ManajemenPetugas currentJabatan={jabatan} />}
+
+        {/* ── PEMBAYARAN VIEW ── */}
+        {activeView === "pembayaran" && (
+          <div className="bg-white rounded-2xl border border-green-100 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-green-100 flex items-center justify-between">
+              <h3 className="font-extrabold text-green-900 font-heading">Riwayat Pembayaran</h3>
+              <span className="font-mono text-xs text-green-600 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">{payments.length} transaksi</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-green-50 border-b border-green-100">
+                    {["ID","No. Plg","Nama","Dusun","Bulan","Tahun","Jumlah","Tgl Bayar","Metode"].map(h => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-bold uppercase tracking-widest text-green-700 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.map((pay, i) => (
+                    <tr key={pay.id} className={`border-b border-green-50 hover:bg-green-50 transition-colors ${i%2===0?"bg-white":"bg-green-50/30"}`}>
+                      <td className="px-4 py-3 font-mono text-xs text-green-600">{pay.id}</td>
+                      <td className="px-4 py-3 font-mono text-xs font-bold text-green-800">{pay.nomorPelanggan}</td>
+                      <td className="px-4 py-3 font-medium text-green-900 whitespace-nowrap">{pay.nama}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold text-white ${dusunColor(pay.dusun, dusunList)}`}>{pay.dusun}</span>
+                      </td>
+                      <td className="px-4 py-3 text-green-700 text-xs">{pay.bulan}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-green-700">{pay.tahun}</td>
+                      <td className="px-4 py-3 font-mono font-bold text-green-900 whitespace-nowrap">{fmt(pay.jumlah)}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-green-600">{pay.tanggal}</td>
+                      <td className="px-4 py-3"><span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full text-xs font-bold">{pay.metode}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {payments.length === 0 && <div className="py-10 text-center text-green-400 text-sm">Belum ada riwayat pembayaran.</div>}
+            </div>
+            <div className="px-5 py-4 border-t border-green-100 bg-green-50 flex justify-between items-center">
+              <span className="font-bold text-green-800 text-sm">Total Terkumpul</span>
+              <span className="font-extrabold text-lg font-heading text-green-800">{fmt(payments.reduce((s,p)=>s+p.jumlah,0))}</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* QR Modal */}
+      {selectedPlg && <QRModal pelanggan={selectedPlg} onClose={() => setSelectedPlg(null)} onConfirm={handleConfirmPayment} />}
+
+      {/* Modal: Tambah Dusun */}
+      {showAddDusun && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowAddDusun(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="font-extrabold text-green-900 font-heading text-lg mb-1">Tambah Kategori Dusun</h3>
+            <p className="text-xs text-green-600 mb-4">Masukkan nama dusun baru untuk ditambahkan ke kategori pelanggan.</p>
+            <form onSubmit={handleAddDusun} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Nama Dusun</label>
+                <input type="text" value={newDusun} onChange={e => setNewDusun(e.target.value)}
+                  placeholder="Contoh: Dusun Bobong Baru"
+                  className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" required />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => setShowAddDusun(false)} className="py-2.5 border border-green-300 rounded-lg text-green-700 text-sm font-semibold hover:bg-green-50 transition-colors">Batal</button>
+                <button type="submit" className="py-2.5 bg-green-700 text-white rounded-lg text-sm font-bold hover:bg-green-800 transition-colors">Tambah</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Tambah Pelanggan */}
+      {showAddPlg && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowAddPlg(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="font-extrabold text-green-900 font-heading text-lg mb-1">Tambah Pelanggan Baru</h3>
+            <p className="text-xs text-green-600 mb-4">Dusun: <strong>{activeTab}</strong></p>
+            <form onSubmit={handleAddPelanggan} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Nama Lengkap</label>
+                  <input required value={plgForm.nama} onChange={e => setPlgForm({...plgForm,nama:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="Nama pelanggan"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">No. Pelanggan</label>
+                  <input required value={plgForm.nomorPelanggan} onChange={e => setPlgForm({...plgForm,nomorPelanggan:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="Contoh: FG004"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Pemakaian (m³)</label>
+                  <input type="number" min="0" value={plgForm.penggunaanM3||""} onChange={e => setPlgForm({...plgForm,penggunaanM3:Number(e.target.value),tagihan:Number(e.target.value)*5000})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="0"/>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Alamat</label>
+                  <input value={plgForm.alamat} onChange={e => setPlgForm({...plgForm,alamat:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="Alamat lengkap"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Bulan</label>
+                  <select value={plgForm.bulan} onChange={e => setPlgForm({...plgForm,bulan:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50">
+                    {BULAN_LIST.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Tahun</label>
+                  <select value={plgForm.tahun} onChange={e => setPlgForm({...plgForm,tahun:e.target.value})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50">
+                    {TAHUN_LIST.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Tagihan (Rp)</label>
+                  <input type="number" min="0" value={plgForm.tagihan||""} onChange={e => setPlgForm({...plgForm,tagihan:Number(e.target.value)})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50" placeholder="0"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Status</label>
+                  <select value={plgForm.status} onChange={e => setPlgForm({...plgForm,status:e.target.value as StatusBayar})} className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50">
+                    {(["Belum Bayar","Lunas","Menunggak"] as StatusBayar[]).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button type="button" onClick={() => setShowAddPlg(false)} className="py-2.5 border border-green-300 rounded-lg text-green-700 text-sm font-semibold hover:bg-green-50 transition-colors">Batal</button>
+                <button type="submit" className="py-2.5 bg-green-700 text-white rounded-lg text-sm font-bold hover:bg-green-800 transition-colors">Simpan</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Google Sheet modal */}
+      {showScript && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowScript(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-extrabold text-green-900 font-heading text-lg">Konfigurasi Google Sheet</h3>
+              <a href={SHEET_URL} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline font-semibold">Buka Sheet ↗</a>
+            </div>
+            <p className="text-xs text-green-600 mb-4">Sheet ID: <span className="font-mono bg-green-50 px-1 rounded">{SHEET_ID}</span></p>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 text-xs text-amber-800 space-y-2">
+              <p className="font-bold text-amber-900">Langkah Setup Apps Script (sekali saja):</p>
+              <p>1. Buka Google Sheet → menu <strong>Extensions → Apps Script</strong></p>
+              <p>2. Hapus kode lama, paste kode di bawah ini</p>
+              <p>3. Klik <strong>Deploy → New deployment → Web app</strong></p>
+              <p>4. Execute as: <strong>Me</strong> · Who has access: <strong>Anyone</strong></p>
+              <p>5. Klik Deploy → salin URL → paste di kolom bawah</p>
+              <p>6. Klik tombol <strong>⟳ Sync</strong> untuk muat data dari sheet</p>
+            </div>
+
+            <div className="bg-gray-900 rounded-xl p-3 mb-4 overflow-x-auto">
+              <p className="text-green-400 text-xs font-mono mb-2 font-bold">// Paste kode ini di Apps Script:</p>
+              <pre className="text-green-300 text-xs font-mono whitespace-pre leading-relaxed">{`const SHEET_ID = "${SHEET_ID}";
+
+function doGet(e) {
+  const cb = e.parameter.callback || "cb";
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const data = {
+    pelanggan: sheetToArray(ss.getSheetByName("pelanggan")),
+    pembayaran: sheetToArray(ss.getSheetByName("pembayaran")),
+    petugas:   sheetToArray(ss.getSheetByName("petugas"))
+  };
+  return ContentService
+    .createTextOutput(cb + "(" + JSON.stringify(data) + ")")
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+function doPost(e) {
+  try {
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const sh = ss.getSheetByName("pembayaran") ||
+               ss.insertSheet("pembayaran");
+    if (sh.getLastRow() === 0)
+      sh.appendRow(["id","nomorPelanggan","nama",
+        "dusun","bulan","tahun","jumlah","tanggal","metode"]);
+    const d = JSON.parse(e.postData.contents);
+    sh.appendRow([d.id,d.nomorPelanggan,d.nama,
+      d.dusun,d.bulan,d.tahun,d.jumlah,d.tanggal,d.metode]);
+    return ContentService
+      .createTextOutput(JSON.stringify({status:"ok"}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({status:"error",msg:err.message}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function sheetToArray(sheet) {
+  if (!sheet) return [];
+  const rows = sheet.getDataRange().getValues();
+  if (rows.length < 2) return [];
+  const headers = rows[0];
+  return rows.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = r[i]);
+    return obj;
+  });
+}`}</pre>
+            </div>
+
+            <label className="block text-xs font-bold text-green-800 mb-1 uppercase tracking-wide">Google Apps Script URL</label>
+            <input type="url" value={scriptInput} onChange={e => setScriptInput(e.target.value)}
+              placeholder="https://script.google.com/macros/s/.../exec"
+              className="w-full border border-green-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50 mb-4 font-mono"/>
+            {scriptUrl && <p className="text-xs text-green-600 mb-3">✓ URL aktif tersimpan. Klik <strong>⟳ Sync</strong> di navbar untuk muat data.</p>}
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => setShowScript(false)} className="py-2.5 border border-green-300 rounded-lg text-green-700 text-sm font-semibold hover:bg-green-50 transition-colors">Batal</button>
+              <button onClick={() => { setScriptUrl(scriptInput); setShowScript(false); setToast("✓ URL Google Sheet disimpan! Klik Sync untuk muat data."); setTimeout(()=>setToast(""),4000); }} className="py-2.5 bg-green-700 text-white rounded-lg text-sm font-bold hover:bg-green-800 transition-colors">Simpan URL</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-green-700 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-semibold z-50 text-center max-w-sm">{toast}</div>}
+    </div>
+  );
+}
+
+// ─── App Root ─────────────────────────────────────────────────────────────────
+export default function App() {
+  const [role, setRole] = useState<Role | null>(null);
+  const [nomorPelanggan, setNomorPelanggan] = useState("");
+  const [scriptUrl, setScriptUrl] = useState("");
+  const [loggedPetugas, setLoggedPetugas] = useState<Petugas | null>(null);
+
+  const handleLogin = (r: Role, noPlg?: string, petugas?: Petugas) => {
+    setRole(r);
+    if (noPlg) setNomorPelanggan(noPlg);
+    if (petugas) setLoggedPetugas(petugas);
+  };
+
+  if (!role) return <LoginPage onLogin={handleLogin} />;
+  if (role === "pelanggan") return <PelangganView nomorPelanggan={nomorPelanggan} onLogout={() => setRole(null)} scriptUrl={scriptUrl} />;
+  return <PetugasDashboard onLogout={() => { setRole(null); setLoggedPetugas(null); }} scriptUrl={scriptUrl} setScriptUrl={setScriptUrl} loggedPetugas={loggedPetugas} />;
+}
